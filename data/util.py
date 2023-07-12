@@ -15,6 +15,10 @@ import cv2
 IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP']
 
 
+def read_npy(path):
+    cond = np.load(path, allow_pickle=True).astype(np.float32)
+    return cond
+
 def is_image_file(filename):
     return any(filename.endswith(extension) for extension in IMG_EXTENSIONS)
 

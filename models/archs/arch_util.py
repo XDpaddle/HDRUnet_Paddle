@@ -50,16 +50,16 @@ class SFTLayer(nn.Layer):
 
     def forward(self, x):
         # x[0]: fea; x[1]: cond
-        scale = self.SFT_scale_conv1(F.leaky_relu(self.SFT_scale_conv0(x[1]), 0.1, inplace=True))
-        shift = self.SFT_shift_conv1(F.leaky_relu(self.SFT_shift_conv0(x[1]), 0.1, inplace=True))
+        scale = self.SFT_scale_conv1(F.leaky_relu(self.SFT_scale_conv0(x[1]), 0.1))
+        shift = self.SFT_shift_conv1(F.leaky_relu(self.SFT_shift_conv0(x[1]), 0.1))
         return x[0] * (scale + 1) + shift
 
 
 class ResBlock_with_SFT(nn.Layer):
     def __init__(self, nf=64):
         super(ResBlock_with_SFT, self).__init__()
-        self.conv1 = nn.Conv2D(nf, nf, 3, 1, 1, bias=True)
-        self.conv2 = nn.Conv2D(nf, nf, 3, 1, 1, bias=True)
+        self.conv1 = nn.Conv2D(nf, nf, 3, 1, 1, bias_attr=True)
+        self.conv2 = nn.Conv2D(nf, nf, 3, 1, 1, bias_attr=True)
 
         self.sft1 = SFTLayer(in_nc=32, out_nc=64, nf=32)
         self.conv1 = nn.Conv2D(nf, nf, 3, 1, 1)
@@ -72,7 +72,7 @@ class ResBlock_with_SFT(nn.Layer):
     def forward(self, x):
         # x[0]: fea; x[1]: cond
         fea = self.sft1(x)
-        fea = F.relu(self.conv1(fea), inplace=True)
+        fea = F.relu(self.conv1(fea))
         fea = self.sft2((fea, x[1]))
         fea = self.conv2(fea)
         return (x[0] + fea, x[1])

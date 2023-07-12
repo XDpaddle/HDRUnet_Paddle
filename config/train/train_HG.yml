@@ -1,16 +1,23 @@
 #### general settings
-name: AGCM_v1
+name: highlight_generation_GAN_v3
 use_tb_logger: true
-model: sr
+model: gan
 distortion: sr
 scale: 1
 gpu_ids: [0]
 
 #### network structures
 network_G:
-  which_model_G: ConditionNet
-  classifier: color_condition 
-  cond_c: 6
+  which_model_G: Hallucination_Generator 
+  in_nc: 3
+  out_nc: 3
+  nf: 64
+  residual: true
+
+network_D:
+  which_model_D: discriminator_vgg_128
+  in_nc: 3
+  nf: 64
 
 #### datasets
 datasets:
@@ -18,33 +25,33 @@ datasets:
     name: HDRTV1K_train
     mode: LQGT_rcan
     dataroot_GT: ../hyconditm-master/datasets/HDRTV1K/train/train_hdr_sub
-    dataroot_LQ: ../hyconditm-master/datasets/HDRTV1K/train/train_sdr_sub
-    dataroot_cond: ../hyconditm-master/datasets/HDRTV1K/train_cond
+    dataroot_LQ: ../hyconditm-master/datasets/HDRTV1K/train/train_sdr_sub/HDRTV1K_test
+    dataroot_mask: ../hyconditm-master/datasets/HDRTV1K/train/train_hdr_sub
     # dataroot_GT: dataset/DIV2K_scale_sub/GT
     # dataroot_LQ: dataset/DIV2K_scale_sub/LR
     cond_scale: 4
     use_shuffle: true
     n_workers: 0 # per GPU
     batch_size: 8
-    GT_size: 480
+    GT_size: 160
     use_flip: false
     use_rot: false
     color: RGB
   val:
     name: HDRTV1K_test
     mode: LQGT_rcan
-    dataroot_GT: /root/autodl-tmp/hyconditm-master/datasets/HDRTV1K/test/test_hdr_1080p
-    dataroot_LQ: /root/autodl-tmp/hyconditm-master/datasets/HDRTV1K/test/test_sdr_1080p
-    dataroot_cond: ../hyconditm-master/datasets/HDRTV1K/cond
+    dataroot_GT: ../hyconditm-master/datasets/HDRTV1K/test/test_hdr
+    dataroot_LQ: ../hyconditm-master/datasets/HDRTV1K/test/test_sdr
+    dataroot_mask: ../hyconditm-master/datasets/HDRTV1K/test/mask
     use_shared_memory: false
-    cond_scale: 4
     # dataroot_GT: dataset/DIV2K_valid_sub/GT
     # dataroot_LQ: dataset/DIV2K_valid_sub/LR
 
 #### path
 path:
-  pretrain_model_G: ~
-  strict_load: true
+  pretrain_model_G: ./experiments/highlight_generation_GAN_v2/models/150000_G.pdparams
+  pretrain_model_D: ./experiments/highlight_generation_GAN_v2/models/150000_D.pdparams
+  strict_load: false
   resume_state: ~
 
 #### training settings: learning rate scheme, loss
@@ -64,6 +71,9 @@ train:
 
   pixel_criterion: l1
   pixel_weight: 1.0
+  feature_weight: 1
+  gan_type: gan
+  gan_weight: !!float 5e-3
 
   manual_seed: 10
   val_freq: 10000
@@ -71,4 +81,4 @@ train:
 #### logger
 logger:
   print_freq: 100
-  save_checkpoint_freq: 20000
+  save_checkpoint_freq: 50000

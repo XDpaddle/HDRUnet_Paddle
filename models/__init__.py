@@ -7,6 +7,8 @@ def create_model(opt):
     # image restoration
     if model == 'sr':  # PSNR-oriented super resolution
         from .SR_model import SRModel as M
+    elif model == 'gan':  # PSNR-oriented super resolution
+        from .GAN_model import GANModel as M
     elif model == 'ClassSR':
         from .ClassSR_model import ClassSR_Model as M
     else:

@@ -81,9 +81,15 @@ class GANLoss(nn.Layer):
         if self.gan_type == 'wgan-gp':
             return target_is_real
         if target_is_real:
-            return paddle.empty_like(input).fill_(self.real_label_val)
+            # return paddle.empty_like(input).fill_(self.real_label_val)
+            target_label = paddle.ones(shape=[8], dtype='float32')
+            target_label = paddle.reshape(target_label,[8,1])
+            return target_label
         else:
-            return paddle.empty_like(input).fill_(self.fake_label_val)
+            #return paddle.empty_like(input).fill_(self.fake_label_val)
+            target_label = paddle.zeros(shape=[8], dtype='float32')
+            target_label = paddle.reshape(target_label,[8,1])
+            return target_label
 
     def forward(self, input, target_is_real):
         target_label = self.get_target_label(input, target_is_real)
