@@ -146,6 +146,7 @@ def main():
             model.update_learning_rate(current_step, warmup_iter=opt['train']['warmup_iter'])
             #### training
             #print(train_data)
+            #paddle.disable_static()
             model.feed_data(train_data)
             model.optimize_parameters(current_step)
 

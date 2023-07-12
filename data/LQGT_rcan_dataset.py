@@ -6,6 +6,7 @@ import paddle
 from paddle.io import Dataset
 import data.util as util
 import os.path as osp
+# from cv2.ximgproc import guidedFilter
 
 
 class LQGTDataset_rcan(Dataset):
@@ -109,9 +110,8 @@ class LQGTDataset_rcan(Dataset):
             else: cond_name = osp.basename(LQ_path).split('.')[0]+'_bicx'+str(cond_scale)+'.png'
             cond_path = osp.join(self.cond_folder, cond_name)
         """
-        #cond_path = self.paths_cond[index]
-        #cond_scale = self.opt['cond_scale']
-        #cond_img = util.imresize_np(img_LQ, 1/cond_scale)
+        #SDR_base = guidedFilter(guide=img_LQ, src=img_LQ, radius=5, eps=0.01)
+        cond = img_LQ.copy()
         
         if self.opt['phase'] == 'train':
             # if the image size is too small
@@ -155,15 +155,17 @@ class LQGTDataset_rcan(Dataset):
         if img_GT.shape[2] == 3:
             img_GT = img_GT[:, :, [2, 1, 0]]
             img_LQ = img_LQ[:, :, [2, 1, 0]]
-            #cond_img = cond_img[:, :, [2, 1, 0]]
+            cond = cond[:, :, [2, 1, 0]]
+            #SDR_base = SDR_base[:, :, [2, 1, 0]]
         #print(np.array(img_GT).astype('float32'))
         img_GT = paddle.to_tensor(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1))),paddle.float32)
         img_LQ = paddle.to_tensor(np.ascontiguousarray(np.transpose(img_LQ, (2, 0, 1))),paddle.float32)
-        #cond = paddle.to_tensor(np.ascontiguousarray(np.transpose(cond_img, (2, 0, 1))),paddle.float32)
+        cond = paddle.to_tensor(np.ascontiguousarray(np.transpose(cond, (2, 0, 1))),paddle.float32)
+        #SDR_base = paddle.to_tensor(np.ascontiguousarray(np.transpose(SDR_base, (2, 0, 1))),paddle.float32)
 
         if LQ_path is None:
             LQ_path = GT_path
-        return {'LQ': img_LQ, 'GT': img_GT, 'LQ_path': LQ_path, 'GT_path': GT_path}
+        return {'LQ': img_LQ, 'GT': img_GT, 'cond': cond, 'LQ_path': LQ_path, 'GT_path': GT_path}
 
     def __len__(self):
         return len(self.paths_GT)

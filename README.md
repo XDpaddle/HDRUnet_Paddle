@@ -1,8 +1,8 @@
-# LE_paddle
+# HDRUNet_paddle
 
-Paper: A New Journey from SDRTV to HDRTV.
+Paper: HDRUNet: Single Image HDR Reconstruction with Denoising and Dequantization.
 
-[Paper](https://paperswithcode.com/paper/a-new-journey-from-sdrtv-to-hdrtv)
+[Paper](https://paperswithcode.com/paper/hdrunet-single-image-hdr-reconstruction-with)
 
 作者: Xiangyu Chen等
 
@@ -16,7 +16,7 @@ https://pan.baidu.com/s/1OSLVoBioyen-zjvLmhbe2g
 
 ## 训练模型
 
-链接：https://pan.baidu.com/s/1U8MvqnGXXaVz_lFnpSCLmg?pwd=hh66 
+链接：https://pan.baidu.com/s/15v9e9vQ5RLk7P8y7TJyQqw?pwd=hh66 
 提取码：hh66
 
 ## 训练步骤
@@ -24,7 +24,7 @@ https://pan.baidu.com/s/1OSLVoBioyen-zjvLmhbe2g
 ### train 
 
 ```bash
-python train.py -opt config/train/train_LE.yml
+python train.py -opt config/train/train_HDRUNet.yml
 ```
 
 ```
@@ -36,13 +36,13 @@ python -m paddle.distributed.launch train.py --launcher fleet -opt config_file_p
 ## 测试步骤
 
 ```bash
-python test.py -opt config/test/test_LE.yml
+python test.py -opt config/test/test_HDRUNet.yml
 ```
 
 ## 复现指标
 
 |        | PSNR  |
 | ------ | ----- |
-| Paddle | 37.73 |
+| Paddle | 37.35 |
 
 注：因显存限制，测试结果为测试图片降采样到1080p的结果

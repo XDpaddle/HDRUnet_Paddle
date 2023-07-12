@@ -1,6 +1,6 @@
 import functools
-import torch.nn as nn
-import torch.nn.functional as F
+import paddle.nn as nn
+import paddle.nn.functional as F
 import models.archs.arch_util as arch_util
 
 
@@ -12,7 +12,7 @@ class HDRUNet(nn.Layer):
         self.conv_first = nn.Conv2D(in_nc, nf, 3, 1, 1)
         
         self.SFT_layer1 = arch_util.SFTLayer()
-        self.HR_conv1 = nn.Conv2D(nf, nf, 3, 1, 1, bias=True)
+        self.HR_conv1 = nn.Conv2D(nf, nf, 3, 1, 1, bias_attr=True)
 
         self.down_conv1 = nn.Conv2D(nf, nf, 3, 2, 1)
         self.down_conv2 = nn.Conv2D(nf, nf, 3, 2, 1)
@@ -26,17 +26,17 @@ class HDRUNet(nn.Layer):
         self.up_conv2 = nn.Sequential(nn.Conv2D(nf, nf*4, 3, 1, 1), nn.PixelShuffle(2))
 
         self.SFT_layer2 = arch_util.SFTLayer()
-        self.HR_conv2 = nn.Conv2D(nf, nf, 3, 1, 1, bias=True)
-        self.conv_last = nn.Conv2D(nf, out_nc, 3, 1, 1, bias=True)
+        self.HR_conv2 = nn.Conv2D(nf, nf, 3, 1, 1, bias_attr=True)
+        self.conv_last = nn.Conv2D(nf, out_nc, 3, 1, 1, bias_attr=True)
 
         cond_in_nc=3
         cond_nf=64
-        self.cond_first = nn.Sequential(nn.Conv2D(cond_in_nc, cond_nf, 3, 1, 1), nn.LeakyReLU(0.1, True), 
-                                        nn.Conv2D(cond_nf, cond_nf, 1), nn.LeakyReLU(0.1, True), 
-                                        nn.Conv2D(cond_nf, cond_nf, 1), nn.LeakyReLU(0.1, True))
-        self.CondNet1 = nn.Sequential(nn.Conv2D(cond_nf, cond_nf, 1), nn.LeakyReLU(0.1, True), nn.Conv2D(cond_nf, 32, 1))
-        self.CondNet2 = nn.Sequential(nn.Conv2D(cond_nf, cond_nf, 3, 2, 1), nn.LeakyReLU(0.1, True), nn.Conv2D(cond_nf, 32, 1))
-        self.CondNet3 = nn.Sequential(nn.Conv2D(cond_nf, cond_nf, 3, 2, 1), nn.LeakyReLU(0.1, True), nn.Conv2D(cond_nf, 32, 3, 2, 1))
+        self.cond_first = nn.Sequential(nn.Conv2D(cond_in_nc, cond_nf, 3, 1, 1), nn.LeakyReLU(0.1), 
+                                        nn.Conv2D(cond_nf, cond_nf, 1), nn.LeakyReLU(0.1), 
+                                        nn.Conv2D(cond_nf, cond_nf, 1), nn.LeakyReLU(0.1))
+        self.CondNet1 = nn.Sequential(nn.Conv2D(cond_nf, cond_nf, 1), nn.LeakyReLU(0.1), nn.Conv2D(cond_nf, 32, 1))
+        self.CondNet2 = nn.Sequential(nn.Conv2D(cond_nf, cond_nf, 3, 2, 1), nn.LeakyReLU(0.1), nn.Conv2D(cond_nf, 32, 1))
+        self.CondNet3 = nn.Sequential(nn.Conv2D(cond_nf, cond_nf, 3, 2, 1), nn.LeakyReLU(0.1), nn.Conv2D(cond_nf, 32, 3, 2, 1))
 
         self.mask_est = nn.Sequential(nn.Conv2D(in_nc, nf, 3, 1, 1), 
                                       nn.ReLU(), 
@@ -51,7 +51,7 @@ class HDRUNet(nn.Layer):
         if act_type == 'relu':
             self.act = nn.ReLU()
         elif act_type == 'leakyrelu':
-            self.act = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+            self.act = nn.LeakyReLU(negative_slope=0.1)
 
     def forward(self, x):
         # x[0]: img; x[1]: cond

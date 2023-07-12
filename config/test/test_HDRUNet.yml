@@ -1,5 +1,5 @@
 #### general settings
-name: test_LE
+name: test_HDRUNet2
 model: sr
 distortion: sr
 scale: 1
@@ -8,12 +8,11 @@ gpu_ids: [0]
 
 #### network structures
 network_G:
-  which_model_G: SRResNet
+  which_model_G: HDRUNet
   in_nc: 3
   out_nc: 3
-  nf: 64
-  nb: 16
-  act_type: relu # | leakyrelu
+  nf: 64 
+  act_type: relu 
 
 datasets:
   # test2k:
@@ -29,10 +28,9 @@ datasets:
   test1:
     name: HDRTV1K_test
     mode: LQGT_rcan
-    dataroot_GT: ../hyconditm-master/datasets/HDRTV1K/train/train_hdr_sub
-    #ataroot_cond: ../hyconditm-master/datasets/HDRTV1K/cond
-    dataroot_LQ: ../hyconditm-master/datasets/HDRTV1K/train/train_sdr_sub
-    cond_scale: 4
+    dataroot_GT: /root/autodl-tmp/hyconditm-master/datasets/HDRTV1K/test/test_hdr_1080p
+    dataroot_cond: ../hyconditm-master/datasets/HDRTV1K/cond
+    dataroot_LQ: /root/autodl-tmp/hyconditm-master/datasets/HDRTV1K/test/test_sdr_1080p
 
 
 
@@ -40,4 +38,4 @@ datasets:
 path:
   # pretrain_model_G: /data0/xtkong/ClassSR-github/experiments/pre_trained_models/RCAN_branch1.pth
   # pretrain_model_G: dataset/RCAN_branch1.pdparams
-  pretrain_model_G: experiments/AGCM_v1/models/500000_G.pdparams
+  pretrain_model_G: experiments/HDRUNet_v1/models/120000_G.pdparams

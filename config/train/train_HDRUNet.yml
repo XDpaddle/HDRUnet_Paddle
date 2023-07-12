@@ -1,5 +1,5 @@
 #### general settings
-name: LE_v1
+name: HDRUNet_v1
 use_tb_logger: true
 model: sr
 distortion: sr
@@ -8,12 +8,11 @@ gpu_ids: [0]
 
 #### network structures
 network_G:
-  which_model_G: SRResNet
+  which_model_G: HDRUNet
   in_nc: 3
   out_nc: 3
-  nf: 64
-  nb: 16
-  act_type: relu # | leakyrelu
+  nf: 64 
+  act_type: relu 
 
 #### datasets
 datasets:
@@ -21,26 +20,26 @@ datasets:
     name: HDRTV1K_train
     mode: LQGT_rcan
     dataroot_GT: ../hyconditm-master/datasets/HDRTV1K/train/train_hdr_sub
-    dataroot_LQ: ../hyconditm-master/datasets/HDRTV1K/train/train_sdr_sub/HDRTV1K_test
+    dataroot_LQ: ../hyconditm-master/datasets/HDRTV1K/train/train_sdr_sub
     # dataroot_cond: ../hyconditm-master/datasets/HDRTV1K/train_cond
     # dataroot_GT: dataset/DIV2K_scale_sub/GT
     # dataroot_LQ: dataset/DIV2K_scale_sub/LR
-    # cond_scale: 4
+    cond_scale: 4
     use_shuffle: true
     n_workers: 0 # per GPU
     batch_size: 8
     GT_size: 160
-    use_flip: false
-    use_rot: false
+    use_flip: true
+    use_rot: true
     color: RGB
   val:
     name: HDRTV1K_test
     mode: LQGT_rcan
     dataroot_GT: /root/autodl-tmp/hyconditm-master/datasets/HDRTV1K/test/test_hdr_1080p
-    dataroot_LQ: /root/autodl-tmp/hyconditm-master/datasets/HDRTV1K/test/HDRTV1K_test
-    # dataroot_cond: ../hyconditm-master/datasets/HDRTV1K/cond
+    dataroot_LQ: /root/autodl-tmp/hyconditm-master/datasets/HDRTV1K/test/test_sdr_1080p
+    dataroot_cond: ../hyconditm-master/datasets/HDRTV1K/cond
     use_shared_memory: false
-    # cond_scale: 4
+    cond_scale: 4
     # dataroot_GT: dataset/DIV2K_valid_sub/GT
     # dataroot_LQ: dataset/DIV2K_valid_sub/LR
 
@@ -56,7 +55,7 @@ train:
   lr_scheme: CosineAnnealingLR_Restart
   beta1: 0.9
   beta2: 0.99
-  niter: 500000
+  niter: 600000
   warmup_iter: -1  # no warm up
   T_period: [500000]
   restarts: [500000]
