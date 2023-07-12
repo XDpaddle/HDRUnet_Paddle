@@ -1,19 +1,13 @@
-import logging
 import os
-import paddle
 from collections import OrderedDict
-from copy import deepcopy
-
-from models import lr_scheduler as lr_scheduler
-
-logger = logging.getLogger('basicsr')
+import paddle 
+import paddle.nn as nn
 
 
 class BaseModel():
-    """Base model."""
-
     def __init__(self, opt):
         self.opt = opt
+        self.device = 'cuda' if opt['gpu_ids'] is not None else 'cpu'
         self.is_train = opt['is_train']
         self.schedulers = []
         self.optimizers = []
@@ -27,80 +21,302 @@ class BaseModel():
     def get_current_visuals(self):
         pass
 
-    def save(self, prefix_name):
-        """Save networks and training state."""
+    def get_current_losses(self):
         pass
 
-    def validation(self, dataloader, current_iter, save_img=False, rgb2bgr=True, use_image=True):
-        """Validation function.
+    def print_network(self):
+        pass
 
-        Args:
-            dataloader (torch.utils.data.DataLoader): Validation dataloader.
-            current_iter (int): Current iteration.
-            tb_logger (tensorboard logger): Tensorboard logger.
-            save_img (bool): Whether to save images. Default: False.
-            rgb2bgr (bool): Whether to save images using rgb2bgr. Default: True
-            use_image (bool): Whether to use saved images to compute metrics (PSNR, SSIM), if not, then use data directly from network' output. Default: True
-        """
+    def save(self, label):
+        pass
 
-        return self.nondist_validation(dataloader, current_iter,
-                                save_img, rgb2bgr, use_image)
+    def load(self):
+        pass
 
-    def get_current_log(self):
-        return self.log_dict
+    def _set_lr(self, lr_groups_l):
+        """Set learning rate for warmup
+        lr_groups_l: list for lr_groups. each for a optimizer"""
+        for optimizer, lr_groups in zip(self.optimizers, lr_groups_l):
+            for param_group, lr in zip(optimizer.param_groups, lr_groups):
+                param_group['lr'] = lr
 
-    def setup_schedulers(self):
-        """Set up schedulers."""
-        train_opt = self.opt['train']
-        scheduler_type = train_opt['scheduler'].pop('type')
-        if scheduler_type == 'CosineAnnealingRestartCyclicLR':
-            self.schedulers.append(
-                lr_scheduler.CosineAnnealingRestartCyclicLR(**train_opt['scheduler']))
-        else:
-            raise NotImplementedError(
-                f'Scheduler {scheduler_type} is not implemented yet.')
+    def _get_init_lr(self):
+        """Get the initial lr, which is set by the scheduler"""
+        init_lr_groups_l = []
+        for optimizer in self.optimizers:
+            init_lr_groups_l.append([v['initial_lr'] for v in optimizer.param_groups])
+        return init_lr_groups_l
 
-    def get_bare_model(self, net):
-        """Get bare model, especially under wrapping with
-        DistributedDataParallel or DataParallel.
-        """
-        return net
-
-    def print_network(self, net):
-        """Print the str and parameter number of a network.
-
-        Args:
-            net (nn.Module)
-        """
-
-        net_cls_str = f'{net.__class__.__name__}'
-
-        net = self.get_bare_model(net)
-        net_str = str(net)
-        net_params = sum(map(lambda x: x.numel(), net.parameters()))
-
-        logger.info(
-            f'Network: {net_cls_str}, with parameters: {net_params.numpy()[0]:,d}')
-        logger.info(net_str)
-
+    def update_learning_rate(self, cur_iter, warmup_iter=-1):
+        for scheduler in self.schedulers:
+            scheduler.step()
+        # set up warm-up learning rate
+        if cur_iter < warmup_iter:
+            # get initial lr for each group
+            init_lr_g_l = self._get_init_lr()
+            # modify warming-up learning rates
+            warm_up_lr_l = []
+            for init_lr_g in init_lr_g_l:
+                warm_up_lr_l.append([v / warmup_iter * cur_iter for v in init_lr_g])
+            # set learning rate
+            self._set_lr(warm_up_lr_l)
 
     def get_current_learning_rate(self):
-        return [
-            self.optimizers[0].get_lr()
-        ]
+        return [self.schedulers[0].get_lr()]
+        #return [param_group['lr'] for param_group in self.optimizers[0].param_groups]
 
+    def get_network_description(self, network):
+        """Get the string and total parameters of the network"""
+        # if isinstance(network, nn.DataParallel) or isinstance(network, DistributedDataParallel):
+        #     network = network.module
+        return str(network), sum(map(lambda x: x.numel(), network.parameters()))
 
-    def reduce_loss_dict(self, loss_dict):
-        """reduce loss dict.
+    def save_network(self, network, network_label, iter_label):
+        save_filename = '{}_{}.pdparams'.format(iter_label, network_label)
+        save_path = os.path.join(self.opt['path']['models'], save_filename)
+        # if isinstance(network, nn.DataParallel) or isinstance(network, DistributedDataParallel):
+        #     network = network.module
+        state_dict = network.state_dict()
+        for key, param in state_dict.items():
+            state_dict[key] = param.cpu()
+        paddle.save(state_dict, save_path)
 
-        In distributed training, it averages the losses among different GPUs .
+    def load_network(self, load_path, network, strict=True):
+        # if isinstance(network, nn.DataParallel) or isinstance(network, DistributedDataParallel):
+        #     network = network.module
+        load_net = paddle.load(load_path)
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network.set_state_dict(load_net_clean)#, strict=strict)
 
-        Args:
-            loss_dict (OrderedDict): Loss dict.
-        """
-        with paddle.no_grad():
-            log_dict = OrderedDict()
-            for name, value in loss_dict.items():
-                log_dict[name] = value.mean().item()
+    def load_network_classifier(self,load_path, network, strict=True):
+        # if isinstance(network, nn.DataParallel) or isinstance(network, DistributedDataParallel):
+        #     network = network.module.classifier
+        load_net = paddle.load(load_path)
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network.set_state_dict(load_net_clean)#, strict=strict)
 
-            return log_dict
+    def load_network_classifier_rcan(self, load_path, network, strict=True):
+        # if isinstance(network, nn.DataParallel) or isinstance(network, DistributedDataParallel):
+        #     network = network.module.classifier
+        load_net = paddle.load(load_path)
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('classifier'):
+
+                load_net_clean[k[11:]] = v
+            else:
+                pass
+        network.set_state_dict(load_net_clean)#, strict=strict)
+
+    def load_network_classifier_(self, load_path, network, strict=True):
+        # if isinstance(network, nn.DataParallel) or isinstance(network, DistributedDataParallel):
+        #     network = network.module
+        load_net = paddle.load(load_path)
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('classifier'):
+
+                load_net_clean[k[11:]] = v
+            else:
+                pass
+        network.set_state_dict(load_net_clean)#, strict=strict)
+
+    def load_network_classSR_2class(self,load_path, network, strict=True):
+
+        # if isinstance(network, nn.DataParallel) or isinstance(network, DistributedDataParallel):
+        #     network1 = network.module.net1
+        #     network2 = network.module.net2
+        network1 = network.net1
+        network2 = network.net2
+        load_net = paddle.load(load_path[0])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network1.set_state_dict(load_net_clean)#, strict=strict)
+
+        load_net = paddle.load(load_path[1])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network2.set_state_dict(load_net_clean)#, strict=strict)
+
+    def load_network_classSR_3class(self,load_path, network, strict=True):
+
+        # if isinstance(network, nn.DataParallel) or isinstance(network, DistributedDataParallel):
+        #     network1 = network.module.net1
+        #     network2 = network.module.net2
+        #     network3 = network.module.net3
+        network1 = network.net1
+        network2 = network.net2
+        network3 = network.net3
+        load_net = paddle.load(load_path[0])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network1.set_state_dict(load_net_clean)#, strict=strict)
+
+        load_net = paddle.load(load_path[1])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network2.set_state_dict(load_net_clean)#, strict=strict)
+
+        load_net = paddle.load(load_path[2])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network3.set_state_dict(load_net_clean)#, strict=strict)
+
+    def load_network_classSR_4class(self,load_path, network, strict=True):
+
+        # if isinstance(network, nn.DataParallel) or isinstance(network, DistributedDataParallel):
+        #     network1 = network.module.net1
+        #     network2 = network.module.net2
+        #     network3 = network.module.net3
+        #     network4 = network.module.net4
+        network1 = network.net1
+        network2 = network.net2
+        network3 = network.net3
+        network4 = network.net4
+        load_net = paddle.load(load_path[0])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network1.set_state_dict(load_net_clean)#, strict=strict)
+
+        load_net = paddle.load(load_path[1])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network2.set_state_dict(load_net_clean)#, strict=strict)
+
+        load_net = paddle.load(load_path[2])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network3.set_state_dict(load_net_clean)#, strict=strict)
+
+        load_net = paddle.load(load_path[3])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network4.set_state_dict(load_net_clean)#, strict=strict)
+
+    def load_network_classSR_5class(self,load_path, network, strict=True):
+
+        # if isinstance(network, nn.DataParallel) or isinstance(network, DistributedDataParallel):
+        #     network1 = network.module.net1
+        #     network2 = network.module.net2
+        #     network3 = network.module.net3
+        #     network4 = network.module.net4
+        #     network5 = network.module.net5
+        network1 = network.net1
+        network2 = network.net2
+        network3 = network.net3
+        network4 = network.net4
+        network5 = network.net5
+        load_net = paddle.load(load_path[0])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network1.set_state_dict(load_net_clean)#, strict=strict)
+
+        load_net = paddle.load(load_path[1])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network2.set_state_dict(load_net_clean)#, strict=strict)
+
+        load_net = paddle.load(load_path[2])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network3.set_state_dict(load_net_clean)#, strict=strict)
+
+        load_net = paddle.load(load_path[3])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network4.set_state_dict(load_net_clean)#, strict=strict)
+
+        load_net = paddle.load(load_path[4])
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in load_net.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+        network5.set_state_dict(load_net_clean)#, strict=strict)
+
+    
+
+    def save_training_state(self, epoch, iter_step):
+        """Save training state during training, which will be used for resuming"""
+        state = {'epoch': epoch, 'iter': iter_step, 'schedulers': [], 'optimizers': []}
+        for s in self.schedulers:
+            state['schedulers'].append(s.state_dict())
+        for o in self.optimizers:
+            state['optimizers'].append(o.state_dict())
+        save_filename = '{}.pdopt'.format(iter_step)
+        save_path = os.path.join(self.opt['path']['training_state'], save_filename)
+        paddle.save(state, save_path)
+
+    def resume_training(self, resume_state):
+        """Resume the optimizers and schedulers for training"""
+        resume_optimizers = resume_state['optimizers']
+        resume_schedulers = resume_state['schedulers']
+        assert len(resume_optimizers) == len(self.optimizers), 'Wrong lengths of optimizers'
+        assert len(resume_schedulers) == len(self.schedulers), 'Wrong lengths of schedulers'
+        for i, o in enumerate(resume_optimizers):
+            self.optimizers[i].set_state_dict(o)
+        for i, s in enumerate(resume_schedulers):
+            self.schedulers[i].set_state_dict(s)

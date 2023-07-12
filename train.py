@@ -1,256 +1,223 @@
+import os
+import math
 import argparse
 import random
-import math
 import logging
-import os.path as osp
-import time
-import datetime
-import os
 
+import paddle 
+import paddle.distributed as dist
+from paddle.distributed import fleet
+from data.data_sampler import DistIterSampler
+
+import config.config as option
+from utils import util
+from data import create_dataloader, create_dataset
+from models import create_model
 import numpy as np
-import paddle
-from paddle.io import DataLoader
 
-from utils.options import dict2str, parse
-from utils.logger import get_root_logger, MessageLogger
-from utils.misc import get_time_str, make_exp_dirs, mkdir_and_rename
-from dataset import Dataset_GaussianDenoising
-from models.image_restoration_model import ImageCleanModel
-
-
-def parse_options(is_train=True):
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '-opt', type=str, required=True, help='Path to option YAML file.')
-    parser.add_argument(
-        '--launcher',
-        choices=['none', 'pytorch', 'slurm'],
-        default='none',
-        help='job launcher')
-    parser.add_argument('--local_rank', type=int, default=0)
-    parser.add_argument("--resume", type=str, default=None)
-    args = parser.parse_args()
-    opt = parse(args.opt, is_train=is_train)
-
-    # distributed settings
-
-    opt['dist'] = False
-    print('Disable distributed.', flush=True)
-
-    opt['rank'] = 0
-    opt['world_size'] = 1
-    # random seed
-    seed = opt.get('manual_seed')
-    if seed is None:
-        seed = random.randint(1, 10000)
-        opt['manual_seed'] = seed
-
-    random.seed(seed)
-    np.random.seed(seed)
-    paddle.seed(seed)
-
-    return opt, args
-
-
-def init_loggers(opt):
-    os.makedirs(opt['path']['log'], exist_ok=True)
-    log_file = osp.join(opt['path']['log'],
-                        f"train_{opt['name']}.log")
-    logger = get_root_logger(
-        logger_name='basicsr', log_level=logging.INFO, log_file=log_file)
-
-    logger.info(dict2str(opt))
-
-    return logger
-
-
-def create_train_val_dataloader(opt, logger):
-    # create train and val dataloaders
-    local_rank = paddle.distributed.ParallelEnv().local_rank
-    train_loader, val_loader = None, None
-    for phase, dataset_opt in opt['datasets'].items():
-        if phase == 'train':
-            dataset_enlarge_ratio = dataset_opt.get('dataset_enlarge_ratio', 1)
-            train_set = Dataset_GaussianDenoising(dataset_opt)
-            batch_sampler = paddle.io.DistributedBatchSampler(
-                train_set, batch_size=dataset_opt['batch_size_per_gpu'], shuffle=True, drop_last=True)
-            train_loader = DataLoader(dataset=train_set,
-                                      batch_sampler=batch_sampler,
-                                      num_workers=4)
-
-            num_iter_per_epoch = math.ceil(len(train_loader) * dataset_enlarge_ratio)
-            total_iters = int(opt['train']['total_iter'])
-            total_epochs = math.ceil(total_iters / (num_iter_per_epoch))
-            if local_rank == 0:
-                logger.info(
-                    'Training statistics:'
-                    f'\n\tNumber of train images: {len(train_set)}'
-                    f'\n\tDataset enlarge ratio: {dataset_enlarge_ratio}'
-                    f'\n\tBatch size per gpu: {dataset_opt["batch_size_per_gpu"]}'
-                    f'\n\tWorld size (gpu number): {opt["world_size"]}'
-                    f'\n\tRequire iter number per epoch: {num_iter_per_epoch}'
-                    f'\n\tTotal epochs: {total_epochs}; iters: {total_iters}.')
-
-        elif phase == 'val':
-            val_set = Dataset_GaussianDenoising(dataset_opt)
-            batch_sampler = paddle.io.DistributedBatchSampler(
-                val_set, batch_size=1, shuffle=False, drop_last=False)
-            val_loader = DataLoader(dataset=val_set,
-                                    batch_sampler=batch_sampler,
-                                    num_workers=0)
-            if local_rank == 0:
-                logger.info(
-                    f'Number of val images/folders in {dataset_opt["name"]}: '
-                    f'{len(val_set)}')
-        else:
-            raise ValueError(f'Dataset phase {phase} is not recognized.')
-
-    return train_loader, val_loader, total_epochs, total_iters, num_iter_per_epoch
+def init_dist(backend='nccl', **kwargs):
+    """initialization for distributed training"""
+    # rank = int(os.environ['RANK'])
+    rank = paddle.distributed.ParallelEnv().rank
+    paddle.device.set_device(f"gpu:{rank}")
+    strategy = fleet.DistributedStrategy()
+    fleet.init(is_collective=True, strategy=strategy)
 
 
 def main():
-    opt, args = parse_options(is_train=True)
+    #### options
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-opt', type=str, help='Path to option YAML file.', default="./config/train/train_RCAN.yml")
+    parser.add_argument('--launcher', choices=['none', 'fleet'], default='none',
+                        help='job launcher')
+    parser.add_argument('--local_rank', type=int, default=0)
+    args = parser.parse_args()
+    opt = option.parse(args.opt, is_train=True)
 
-    nranks = paddle.distributed.ParallelEnv().nranks
-    local_rank = paddle.distributed.ParallelEnv().local_rank
-    if nranks > 1:
-        # Initialize parallel environment if not done.
-        if not paddle.distributed.parallel.parallel_helper._is_parallel_ctx_initialized(
-        ):
-            paddle.distributed.init_parallel_env()
-        opt['world_size'] = nranks
-    # mkdir for experiments and logger
+    opt_net = opt['network_G']
+    which_model = opt_net['which_model_G']
 
-    # if local_rank == 0:
-    #     make_exp_dirs(opt)
-    #     if opt['logger'].get('use_tb_logger') and 'debug' not in opt[
-    #             'name'] and opt['rank'] == 0:
-    #         mkdir_and_rename(osp.join('tb_logger', opt['name']))
+    #### distributed training settings
+    if args.launcher == 'none':  # disabled distributed training
+        opt['dist'] = False
+        rank = -1
+        print('Disabled distributed training.')
+    else:
+        opt['dist'] = True
+        rank = paddle.distributed.ParallelEnv().rank
+        world_size = paddle.distributed.ParallelEnv().world_size
+        init_dist()
 
-    # initialize loggers
-    logger = init_loggers(opt)
+    #### loading resume state if exists
+    if opt['path'].get('resume_state', None):
+        # distributed resuming: all load into default GPU
+        # device_id = paddle.distributed.ParallelEnv().device_id
+        resume_state = paddle.load(opt['path']['resume_state'])
+        option.check_resume(opt, resume_state['iter'])  # check resume options
+    else:
+        resume_state = None
 
-    model = ImageCleanModel(opt)
-    # create train and validation dataloaders
-    result = create_train_val_dataloader(opt, logger)
-    train_loader, val_loader, total_epochs, total_iters, num_iter_per_epoch = result
+    #### mkdir and loggers
+    if rank <= 0:  # normal training (rank -1) OR distributed training (rank 0)
+        # if resume_state is None:
+        util.mkdir_and_rename(
+            opt['path']['experiments_root'])  # rename experiment folder if exists
+        util.mkdirs((path for key, path in opt['path'].items() if not key == 'experiments_root'
+                         and 'pretrain_model' not in key and 'resume' not in key))
 
+        # config loggers. Before it, the log will not work
+        util.setup_logger('base', opt['path']['log'], 'train_' + opt['name'], level=logging.INFO,
+                          screen=True, tofile=True)
+        logger = logging.getLogger('base')
+        logger.info(option.dict2str(opt))
+        # tensorboard logger
+        if opt['use_tb_logger'] and 'debug' not in opt['name']:
+            from visualdl import LogWriter
+            tb_logger = LogWriter(logdir='../tb_logger/' + opt['name'])
+    else:
+        util.setup_logger('base', opt['path']['log'], 'train', level=logging.INFO, screen=True)
+        logger = logging.getLogger('base')
 
-    start_epoch = 0
-    current_iter = 0
+    # convert to NoneDict, which returns None for missing keys
+    opt = option.dict_to_nonedict(opt)
 
-    if args.resume is not None:
-        state_dict = paddle.load(args.resume+".pdparams")
-        model.net_g.set_state_dict(state_dict)
-        state_dict = paddle.load(args.resume + ".pdopt")
-        model.optimizer_g.set_state_dict(state_dict)
-        start_epoch = args.resume.split('/')[-1].split('_')[0]
-        start_epoch = int(start_epoch) + 1
-        current_iter = start_epoch * num_iter_per_epoch
+    #### random seed
+    seed = opt['train']['manual_seed']
+    if seed is None:
+        seed = random.randint(1, 10000)
+    if rank <= 0:
+        logger.info('Random seed: {}'.format(seed))
+    util.set_random_seed(seed)
 
-    msg_logger = MessageLogger(opt, current_iter)
-    # training
-    if local_rank == 0:
-        logger.info(
-            f'Start training from epoch: {start_epoch}, iter: {current_iter}')
-    data_time, iter_time = time.time(), time.time()
-    start_time = time.time()
-    iters = opt['datasets']['train'].get('iters')
-    batch_size = opt['datasets']['train'].get('batch_size_per_gpu')
-    mini_batch_sizes = opt['datasets']['train'].get('mini_batch_sizes')
-    gt_size = opt['datasets']['train'].get('gt_size')
-    mini_gt_sizes = opt['datasets']['train'].get('gt_sizes')
-
-    groups = np.array([sum(iters[0:i + 1]) for i in range(0, len(iters))])
-
-    logger_j = [True] * len(groups)
-
-    scale = opt['scale']
-
-    epoch = start_epoch
-    best_metric = 0
-    while current_iter <= total_iters:
-        for idx, train_data in enumerate(train_loader):
-            current_iter += 1
-            if current_iter > total_iters:
-                break
-            ### ------Progressive learning ---------------------
-            j = ((current_iter > groups) != True).nonzero()[0]
-            if len(j) == 0:
-                bs_j = len(groups) - 1
+    #### create train and val dataloader
+    dataset_ratio = 1  # enlarge the size of each epoch
+    for phase, dataset_opt in opt['datasets'].items():
+        if phase == 'train':
+            train_set = create_dataset(dataset_opt)
+            train_size = int(math.ceil(len(train_set) / dataset_opt['batch_size']))
+            total_iters = int(opt['train']['niter'])
+            total_epochs = int(math.ceil(total_iters / train_size))
+            if opt['dist']:
+                train_sampler = DistIterSampler(train_set, world_size, rank, dataset_ratio)
+                total_epochs = int(math.ceil(total_iters / (train_size * dataset_ratio)))
             else:
-                bs_j = j[0]
+                train_sampler = None
+            train_loader = create_dataloader(train_set, dataset_opt, opt, train_sampler)
+            if rank <= 0:
+                logger.info('Number of train images: {:,d}, iters: {:,d}'.format(
+                    len(train_set), train_size))
+                logger.info('Total epochs needed: {:d} for iters {:,d}'.format(
+                    total_epochs, total_iters))
+        elif phase == 'val':
+            val_set = create_dataset(dataset_opt)
+            val_loader = create_dataloader(val_set, dataset_opt, opt, None)
+            if rank <= 0:
+                logger.info('Number of val images in [{:s}]: {:d}'.format(
+                    dataset_opt['name'], len(val_set)))
+        else:
+            raise NotImplementedError('Phase [{:s}] is not recognized.'.format(phase))
+    assert train_loader is not None
 
-            mini_gt_size = mini_gt_sizes[bs_j]
-            mini_batch_size = mini_batch_sizes[bs_j]
+    #### create model
+    model = create_model(opt)
 
-            if logger_j[bs_j] and local_rank == 0:
-                logger.info('\n Updating Patch_Size to {} and Batch_Size to {} \n'.format(mini_gt_size,
-                                                                                          mini_batch_size))
-                logger_j[bs_j] = False
+    #### resume training
+    if resume_state:
+        logger.info('Resuming training from epoch: {}, iter: {}.'.format(
+            resume_state['epoch'], resume_state['iter']))
 
-            lq = train_data['lq']
-            gt = train_data['gt']
+        start_epoch = resume_state['epoch']
+        current_step = resume_state['iter']
+        model.resume_training(resume_state)  # handle optimizers and schedulers
+    else:
+        current_step = 0
+        start_epoch = 0
 
-            if mini_batch_size < batch_size:
-                indices = random.sample(range(0, batch_size), k=mini_batch_size)
-                lq = lq[indices]
-                gt = gt[indices]
+    #### training
+    logger.info('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
+    for epoch in range(start_epoch, total_epochs + 1):
+        if opt['dist']:
+            train_sampler.set_epoch(epoch)
+        for _, train_data in enumerate(train_loader):
+            current_step += 1
+            if current_step > total_iters:
+                break
+            #### update learning rate
+            model.update_learning_rate(current_step, warmup_iter=opt['train']['warmup_iter'])
+            #### training
+            #print(train_data)
+            model.feed_data(train_data)
+            model.optimize_parameters(current_step)
 
-            if mini_gt_size < gt_size:
-                x0 = int((gt_size - mini_gt_size) * random.random())
-                y0 = int((gt_size - mini_gt_size) * random.random())
-                x1 = x0 + mini_gt_size
-                y1 = y0 + mini_gt_size
-                lq = lq[:, :, x0:x1, y0:y1]
-                gt = gt[:, :, x0 * scale:x1 * scale, y0 * scale:y1 * scale]
-            ###-------------------------------------------
+            #### log
+            if current_step % opt['logger']['print_freq'] == 0:
+                logs = model.get_current_log()
+                message = '[epoch:{:3d}, iter:{:8,d}, lr:('.format(epoch, current_step)
+                for v in model.get_current_learning_rate():
+                    message += '{:.3e},'.format(v)
+                message += ')] '
+                for k, v in logs.items():
+                    message += '{:s}: {:.4e} '.format(k, v)
+                    # tensorboard logger
+                    if opt['use_tb_logger'] and 'debug' not in opt['name']:
+                        if rank <= 0:
+                            tb_logger.add_scalar(k, v, current_step)
+                if rank <= 0:
+                    logger.info(message)
+            ### validation
+            if rank <= 0 and opt['datasets'].get('val', None) and current_step % opt['train']['val_freq'] == 0:
+                # does not support multi-GPU validation
+                pbar = util.ProgressBar(len(val_loader))
+                avg_psnr = 0.
+                idx = 0
+                for val_data in val_loader:
+                    idx += 1
+                    img_name = os.path.splitext(os.path.basename(val_data['LQ_path'][0]))[0]
+                    img_dir = os.path.join(opt['path']['val_images'], img_name)
+                    util.mkdir(img_dir)
 
-            model.feed_train_data({'lq': lq, 'gt': gt})
-            model.optimize_parameters(current_iter)
+                    model.feed_data(val_data)
+                    model.test()
 
-            iter_time = time.time() - iter_time
-            # log
-            if current_iter % opt['logger']['print_freq'] == 0 and local_rank == 0:
-                log_vars = {'epoch': epoch, 'iter': current_iter}
-                log_vars.update({'lrs': model.get_current_learning_rate()})
-                log_vars.update({'time': iter_time, 'data_time': data_time})
-                log_vars.update(model.get_current_log())
-                msg_logger(log_vars)
-            data_time = time.time()
-            iter_time = time.time()
-        if local_rank == 0:
-            # save models and training states
-            logger.info(f'Saving models and training states on epoch {epoch}.')
-            model.save()
+                    visuals = model.get_current_visuals()
+                    if which_model =="HyCondITMv1":
+                        sr_img = util.tensor2img(visuals['rlt'], np.uint8)  # uint8
+                        gt_img = util.tensor2img(visuals['GT'], np.uint8)  # uint8
+                    else:
+                        sr_img = util.tensor2img(visuals['rlt'])  # uint8
+                        gt_img = util.tensor2img(visuals['GT'])  # uint8
 
-            # validation
-            rgb2bgr = opt['val'].get('rgb2bgr', True)
-            # wheather use uint8 image to compute metrics
-            use_image = opt['val'].get('use_image', True)
-            current_metric = model.validation(val_loader, current_iter,
-                             opt['val']['save_img'], rgb2bgr, use_image)
-            if current_metric > best_metric:
-                best_metric = current_metric
-                logger.info(f'Saving best models and training states on epoch {epoch}.')
-                model.save(prefix_name='best')
+                    # Save SR images for reference
+                    #save_img_path = os.path.join(img_dir,
+                    #                             '{:s}_{:d}.png'.format(img_name, current_step))
+                    #util.save_img(sr_img, save_img_path)
 
-        epoch += 1
+                    # calculate PSNR
+                    sr_img, gt_img = util.crop_border([sr_img, gt_img], opt['scale'])
+                    avg_psnr += util.calculate_psnr(sr_img, gt_img)
+                    pbar.update('Test {}'.format(img_name))
 
-    # end of epoch
-    if local_rank == 0:
-        consumed_time = str(
-            datetime.timedelta(seconds=int(time.time() - start_time)))
-        logger.info(f'End of training. Time consumed: {consumed_time}')
-        logger.info('Save the latest model.')
-        model.save()  # -1 stands for the latest
-    if opt.get('val') is not None and local_rank == 0:
-        rgb2bgr = opt['val'].get('rgb2bgr', True)
-        use_image = opt['val'].get('use_image', True)
-        model.validation(val_loader, current_iter,
-                         opt['val']['save_img'],
-                         rgb2bgr=rgb2bgr,
-                         use_image=use_image)
+                avg_psnr = avg_psnr / idx
+
+                # log
+                logger.info('# Validation # PSNR: {:.4e}'.format(avg_psnr))
+                # tensorboard logger
+                if opt['use_tb_logger'] and 'debug' not in opt['name']:
+                    tb_logger.add_scalar('psnr', avg_psnr, current_step)
+
+
+            #### save models and training states
+            if current_step % opt['logger']['save_checkpoint_freq'] == 0:
+                if rank <= 0:
+                    logger.info('Saving models and training states.')
+                    model.save(current_step)
+                    model.save_training_state(epoch, current_step)
+
+    if rank <= 0:
+        logger.info('Saving the final model.')
+        model.save('latest')
+        logger.info('End of training.')
+        tb_logger.close()
 
 
 if __name__ == '__main__':
