@@ -1,4 +1,4 @@
-# HG_paddle
+# LE_paddle
 
 Paper: A New Journey from SDRTV to HDRTV.
 
@@ -16,7 +16,7 @@ https://pan.baidu.com/s/1OSLVoBioyen-zjvLmhbe2g
 
 ## 训练模型
 
-链接：https://pan.baidu.com/s/1PxihzPH8WCgdRAtP9fivBg?pwd=hh66 
+链接：https://pan.baidu.com/s/1U8MvqnGXXaVz_lFnpSCLmg?pwd=hh66 
 提取码：hh66
 
 ## 训练步骤
@@ -24,10 +24,7 @@ https://pan.baidu.com/s/1OSLVoBioyen-zjvLmhbe2g
 ### train 
 
 ```bash
-#First
-python train.py -opt options/train/train_pre_Gen.yml
-#Then
-python train.py -opt config/train/train_HG.yml
+python train.py -opt config/train/train_LE.yml
 ```
 
 ```
@@ -39,13 +36,13 @@ python -m paddle.distributed.launch train.py --launcher fleet -opt config_file_p
 ## 测试步骤
 
 ```bash
-python test.py -opt config/test/test_HG.yml
+python test.py -opt config/test/test_LE.yml
 ```
 
 ## 复现指标
 
 |        | PSNR  |
 | ------ | ----- |
-| Paddle | 37.60 |
+| Paddle | 37.73 |
 
 注：因显存限制，测试结果为测试图片降采样到1080p的结果

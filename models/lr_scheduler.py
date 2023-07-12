@@ -173,7 +173,7 @@ class CosineAnnealingDecay(LRScheduler):
 
 if __name__ == "__main__":
     linear = paddle.nn.Linear(10, 10)
-    optimizer = paddle.optimizer.Adam(parameters=linear.parameters(), learning_rate=5e-7, weight_decay=5e-4,
+    optimizer = paddle.optimizer.Adam(parameters=linear.parameters(), learning_rate=2e-4, weight_decay=0,
                                  beta1=0.9, beta2=0.99)
     ##############################
     # MultiStepLR_Restart
